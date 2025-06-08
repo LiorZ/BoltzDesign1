@@ -21,6 +21,7 @@ from boltz.data.parse.yaml import parse_yaml
 from boltz.data.types import MSA, Manifest, Record
 from boltz.data.write.writer import BoltzWriter
 from boltz.model.model import Boltz1
+from boltz.utils import load_ca_tensor
 
 CCD_URL = "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl"
 MODEL_URL = (
@@ -535,6 +536,24 @@ def cli() -> None:
     help="Pairing strategy to use. Used only if --use_msa_server is set. Options are 'greedy' and 'complete'",
     default="greedy",
 )
+@click.option(
+    "--guide_pdb",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to a guide PDB or CIF file to steer the diffusion process.",
+)
+@click.option(
+    "--guide_chain",
+    type=str,
+    default="A",
+    help="Chain identifier to use from the guide structure.",
+)
+@click.option(
+    "--guide_strength",
+    type=float,
+    default=0.1,
+    help="Interpolation factor between diffusion and guide coordinates.",
+)
 
 
 @click.option(
@@ -565,6 +584,9 @@ def predict(
     use_msa_server: bool = False,
     msa_server_url: str = "https://api.colabfold.com",
     msa_pairing_strategy: str = "greedy",
+    guide_pdb: Optional[str] = None,
+    guide_chain: str = "A",
+    guide_strength: float = 0.1,
     cyclic: bool = False,
 ) -> None:
     """Run predictions with Boltz-1."""
@@ -638,6 +660,13 @@ def predict(
         msa_dir=processed_dir / "msa",
     )
 
+    guide_coords = None
+    if guide_pdb is not None:
+        try:
+            guide_coords = load_ca_tensor(guide_pdb, chain_id=guide_chain)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"Failed to load guide structure: {e}")
+
 
     # Create data module
     data_module = BoltzInferenceDataModule(
@@ -658,7 +687,9 @@ def predict(
         "write_confidence_summary": True,
         "write_full_pae": write_full_pae,
         "write_full_pde": write_full_pde,
-        "cyclic": cyclic
+        "cyclic": cyclic,
+        "guide_coords": guide_coords,
+        "guide_strength": guide_strength,
     }
     diffusion_params = BoltzDiffusionParams()
     diffusion_params.step_scale = step_scale
