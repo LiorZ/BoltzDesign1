@@ -259,6 +259,12 @@ def get_CA_and_sequence(structure_file, chain_id='A'):
     return xyz, sequence
 
 
+def load_ca_tensor(structure_file, chain_id="A", device="cpu"):
+    """Load CA coordinates from a PDB/CIF file as a torch tensor."""
+    xyz, _ = get_CA_and_sequence(structure_file, chain_id)
+    return torch.tensor(xyz, dtype=torch.float32, device=device)
+
+
 def np_kabsch(a, b, return_v=False):
     '''Get alignment matrix for two sets of coordinates using numpy
     
