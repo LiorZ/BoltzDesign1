@@ -259,6 +259,12 @@ def get_CA_and_sequence(structure_file, chain_id='A'):
     return xyz, sequence
 
 
+def load_ca_tensor(structure_file, chain_id="A", device="cpu"):
+    """Load CA coordinates from a PDB/CIF file as a torch tensor."""
+    xyz, _ = get_CA_and_sequence(structure_file, chain_id)
+    return torch.tensor(xyz, dtype=torch.float32, device=device)
+
+
 def np_kabsch(a, b, return_v=False):
     '''Get alignment matrix for two sets of coordinates using numpy
     
@@ -482,7 +488,9 @@ def boltz_hallucination(
     chain_to_number=None,
     msa_max_seqs=4096,
     optimizer_type='SGD',
-    save_trajectory=False
+    save_trajectory=False,
+    guide_coords=None,
+    guide_strength=0.1
 ):
 
     predict_args = {
@@ -501,6 +509,10 @@ def boltz_hallucination(
     name = yaml_path.stem
     target = parse_boltz_schema(name, data, ccd_lib)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if guide_coords is not None:
+        guide_coords = guide_coords.to(device)
+        predict_args["guide_coords"] = guide_coords
+        predict_args["guide_strength"] = guide_strength
     boltz_model.train() if set_train else boltz_model.eval()
     print(f"set in {'train' if set_train else 'eval'} mode")
 
@@ -1049,6 +1061,8 @@ def run_boltz_design(
     show_animation=False,
     save_trajectory=False,
     redo_boltz_predict=True,
+    guide_coords=None,
+    guide_strength=0.1,
 ):
     """
     Run Boltz protein design pipeline.
@@ -1143,7 +1157,9 @@ def run_boltz_design(
                         input_res_type=False,
                         loss_scales=loss_scales,
                         chain_to_number=chain_to_number,
-                        save_trajectory=save_trajectory
+                        save_trajectory=save_trajectory,
+                        guide_coords=guide_coords,
+                        guide_strength=guide_strength
                     )
                     print('warm up done')     
                     output, output_apo, best_batch, best_batch_apo, best_structure, best_structure_apo ,distogram_history_2, sequence_history_2, loss_history_2, con_loss_history, i_con_loss_history, plddt_loss_history, traj_coords_list_2, traj_plddt_list_2, structure = boltz_hallucination(
@@ -1155,7 +1171,9 @@ def run_boltz_design(
                         input_res_type=input_res_type,
                         loss_scales=loss_scales,
                         chain_to_number=chain_to_number,
-                        save_trajectory=save_trajectory
+                        save_trajectory=save_trajectory,
+                        guide_coords=guide_coords,
+                        guide_strength=guide_strength
                     )
                     loss_history.extend(loss_history_2)
                     distogram_history.extend(distogram_history_2) 
