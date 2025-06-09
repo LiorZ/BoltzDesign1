@@ -320,6 +320,8 @@ class Boltz1(LightningModule):
         run_confidence_sequentially: bool = False,
         disconnect_feats: bool = False,
         disconnect_pairformer: bool = False,
+        guide_coords: Optional[Tensor] = None,
+        guide_strength: Optional[float] = None,
     ) -> dict[str, Tensor]:
         dict_out = {}
 
@@ -368,7 +370,17 @@ class Boltz1(LightningModule):
             dict_out = {"pdistogram": pdistogram}
 
     
-        structure_out = self.structure_module.sample(
+        if guide_coords is None:
+            guide_coords = self.predict_args.get("guide_coords")
+        if guide_strength is None:
+            guide_strength = self.predict_args.get("guide_strength", 0.1)
+
+        sample_fn = (
+            self.structure_module.sample_guided
+            if guide_coords is not None
+            else self.structure_module.sample
+        )
+        sample_kwargs = dict(
             s_trunk=s,
             z_trunk=z,
             s_inputs=s_inputs,
@@ -379,6 +391,11 @@ class Boltz1(LightningModule):
             multiplicity=diffusion_samples,
             train_accumulate_token_repr=self.training,
         )
+        if guide_coords is not None:
+            sample_kwargs["guide_coords"] = guide_coords
+            sample_kwargs["guide_strength"] = guide_strength
+
+        structure_out = sample_fn(**sample_kwargs)
         # Detach structure outputs but not the inputs
         dict_out.update({
             k: v.detach() if isinstance(v, torch.Tensor) else v 
@@ -434,6 +451,8 @@ class Boltz1(LightningModule):
         multiplicity_diffusion_train: int = 1,
         diffusion_samples: int = 1,
         run_confidence_sequentially: bool = False,
+        guide_coords: Optional[Tensor] = None,
+        guide_strength: float = 0.1,
     ) -> dict[str, Tensor]:
         dict_out = {}
 
@@ -506,19 +525,23 @@ class Boltz1(LightningModule):
             )
 
         if (not self.training) or self.confidence_prediction:
-            dict_out.update(
-                self.structure_module.sample(
-                    s_trunk=s,
-                    z_trunk=z,
-                    s_inputs=s_inputs,
-                    feats=feats,
-                    relative_position_encoding=relative_position_encoding,
-                    num_sampling_steps=num_sampling_steps,
-                    atom_mask=feats["atom_pad_mask"],
-                    multiplicity=diffusion_samples,
-                    train_accumulate_token_repr=self.training,
-                )
+            sample_kwargs = dict(
+                s_trunk=s,
+                z_trunk=z,
+                s_inputs=s_inputs,
+                feats=feats,
+                relative_position_encoding=relative_position_encoding,
+                num_sampling_steps=num_sampling_steps,
+                atom_mask=feats["atom_pad_mask"],
+                multiplicity=diffusion_samples,
+                train_accumulate_token_repr=self.training,
             )
+            if guide_coords is not None:
+                sample_kwargs["guide_coords"] = guide_coords
+                sample_kwargs["guide_strength"] = guide_strength
+                dict_out.update(self.structure_module.sample_guided(**sample_kwargs))
+            else:
+                dict_out.update(self.structure_module.sample(**sample_kwargs))
         # print("running confidence module")
         if self.confidence_prediction:
             dict_out.update(
@@ -1303,6 +1326,8 @@ class Boltz1(LightningModule):
                 num_sampling_steps=self.predict_args["sampling_steps"],
                 diffusion_samples=self.predict_args["diffusion_samples"],
                 run_confidence_sequentially=True,
+                guide_coords=self.predict_args.get("guide_coords"),
+                guide_strength=self.predict_args.get("guide_strength", 0.1),
             )
             pred_dict = {"exception": False}
             pred_dict["masks"] = batch["atom_pad_mask"]

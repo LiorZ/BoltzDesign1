@@ -209,6 +209,12 @@ Examples:
     parser.add_argument('--ccd_path', type=str,
         default='~/.boltz/ccd.pkl',
         help='Path to CCD file')
+    parser.add_argument('--guide_pdb', type=str, default=None,
+                        help='Path to a guide PDB/CIF file to steer diffusion')
+    parser.add_argument('--guide_chain', type=str, default='A',
+                        help='Chain ID to use from the guide structure')
+    parser.add_argument('--guide_strength', type=float, default=0.1,
+                        help='Interpolation between diffusion and guide coords')
     parser.add_argument('--alphafold_dir', type=str,
         default='~/alphafold3',
         help='AlphaFold directory')
@@ -269,7 +275,12 @@ def load_boltz_model(args, device):
         "write_full_pae": False,
         "write_full_pde": False,
     }
-    
+
+    if args.guide_pdb:
+        guide_coords = load_ca_tensor(args.guide_pdb, chain_id=args.guide_chain, device=device)
+        predict_args["guide_coords"] = guide_coords
+        predict_args["guide_strength"] = args.guide_strength
+
     boltz_model = get_boltz_model(args.boltz_checkpoint, predict_args, device)
     boltz_model.train()
     return boltz_model, predict_args
@@ -384,7 +395,11 @@ def run_boltz_design_step(args, config, boltz_model, yaml_dir, main_dir, version
     boltz_path = shutil.which("boltz")
     if boltz_path is None:
         raise FileNotFoundError("The 'boltz' command was not found in the system PATH.")
-    
+
+    guide_coords = None
+    if args.guide_pdb:
+        guide_coords = load_ca_tensor(args.guide_pdb, chain_id=args.guide_chain)
+
     run_boltz_design(
         boltz_path=boltz_path,
         main_dir=main_dir,
@@ -398,6 +413,8 @@ def run_boltz_design_step(args, config, boltz_model, yaml_dir, main_dir, version
         show_animation=args.show_animation,
         save_trajectory=args.save_trajectory,
         redo_boltz_predict=args.redo_boltz_predict,
+        guide_coords=guide_coords,
+        guide_strength=args.guide_strength,
     )
     
     print("Boltz design step completed!")

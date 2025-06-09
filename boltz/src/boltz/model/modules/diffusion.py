@@ -541,6 +541,144 @@ class AtomDiffusion(Module):
 
         return dict(sample_atom_coords=atom_coords, diff_token_repr=token_repr)
 
+    def sample_guided(
+        self,
+        atom_mask,
+        guide_coords: torch.Tensor,
+        num_sampling_steps=None,
+        multiplicity=1,
+        guide_strength: float = 0.1,
+        train_accumulate_token_repr: bool = False,
+        **network_condition_kwargs,
+    ):
+        """Sample structures while steering towards a guide structure.
+
+        Parameters
+        ----------
+        atom_mask : torch.Tensor
+            Atom mask for the diffused structure.
+        guide_coords : torch.Tensor
+            Coordinates from the guide PDB (CA atoms). Can have a different
+            number of residues than the diffused structure.
+        num_sampling_steps : int, optional
+            Number of sampling steps.
+        multiplicity : int
+            Number of diffusion samples.
+        guide_strength : float
+            Interpolation factor between the diffusion step and the guided
+            coordinates.
+        train_accumulate_token_repr : bool
+            Whether to accumulate token representations during training.
+        """
+
+        num_sampling_steps = default(num_sampling_steps, self.num_sampling_steps)
+
+        atom_mask = atom_mask.repeat_interleave(multiplicity, 0)
+        shape = (*atom_mask.shape, 3)
+
+        sigmas = self.sample_schedule(num_sampling_steps)
+        gammas = torch.where(sigmas > self.gamma_min, self.gamma_0, 0.0)
+        sigmas_and_gammas = list(zip(sigmas[:-1], sigmas[1:], gammas[1:]))
+
+        init_sigma = sigmas[0]
+        atom_coords = init_sigma * torch.randn(shape, device=self.device)
+        atom_coords_denoised = None
+        model_cache = {} if self.use_inference_model_cache else None
+
+        token_repr = None
+        token_a = None
+
+        guide_coords = guide_coords.to(self.device)
+
+        def align_template(template, pred):
+            d = torch.cdist(pred.unsqueeze(0), template.unsqueeze(0))[0]
+            idx = d.argmin(dim=1)
+            matched = template[idx]
+            weights = torch.ones(pred.shape[0], device=pred.device)
+            mask = torch.ones(pred.shape[0], device=pred.device)
+            return weighted_rigid_align(
+                matched.unsqueeze(0),
+                pred.unsqueeze(0),
+                weights.unsqueeze(0),
+                mask.unsqueeze(0),
+            )[0]
+
+        for sigma_tm, sigma_t, gamma in sigmas_and_gammas:
+            atom_coords, atom_coords_denoised = center_random_augmentation(
+                atom_coords,
+                atom_mask,
+                augmentation=True,
+                return_second_coords=True,
+                second_coords=atom_coords_denoised,
+            )
+
+            sigma_tm, sigma_t, gamma = sigma_tm.item(), sigma_t.item(), gamma.item()
+
+            t_hat = sigma_tm * (1 + gamma)
+            eps = (
+                self.noise_scale
+                * sqrt(t_hat**2 - sigma_tm**2)
+                * torch.randn(shape, device=self.device)
+            )
+            atom_coords_noisy = atom_coords + eps
+
+            with torch.no_grad():
+                atom_coords_denoised, token_a = self.preconditioned_network_forward(
+                    atom_coords_noisy,
+                    t_hat,
+                    training=False,
+                    network_condition_kwargs=dict(
+                        multiplicity=multiplicity,
+                        model_cache=model_cache,
+                        **network_condition_kwargs,
+                    ),
+                )
+
+            if self.accumulate_token_repr:
+                if token_repr is None:
+                    token_repr = torch.zeros_like(token_a)
+
+                with torch.set_grad_enabled(train_accumulate_token_repr):
+                    sigma = torch.full(
+                        (atom_coords_denoised.shape[0],),
+                        t_hat,
+                        device=atom_coords_denoised.device,
+                    )
+                    token_repr = self.out_token_feat_update(
+                        times=self.c_noise(sigma), acc_a=token_repr, next_a=token_a
+                    )
+
+            # steer towards guide coordinates
+            aligned_templates = []
+            for i in range(atom_coords_noisy.shape[0]):
+                aligned_templates.append(align_template(guide_coords, atom_coords_denoised[i]))
+            aligned_templates = torch.stack(aligned_templates)
+            atom_coords_noisy = (
+                (1 - guide_strength) * atom_coords_noisy
+                + guide_strength * aligned_templates
+            )
+
+            if self.alignment_reverse_diff:
+                with torch.autocast("cuda", enabled=False):
+                    atom_coords_noisy = weighted_rigid_align(
+                        atom_coords_noisy.float(),
+                        atom_coords_denoised.float(),
+                        atom_mask.float(),
+                        atom_mask.float(),
+                    )
+
+                atom_coords_noisy = atom_coords_noisy.to(atom_coords_denoised)
+
+            denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
+            atom_coords_next = (
+                atom_coords_noisy
+                + self.step_scale * (sigma_t - t_hat) * denoised_over_sigma
+            )
+
+            atom_coords = atom_coords_next
+
+        return dict(sample_atom_coords=atom_coords, diff_token_repr=token_repr)
+
     def loss_weight(self, sigma):
         return (sigma**2 + self.sigma_data**2) / ((sigma * self.sigma_data) ** 2)
 
