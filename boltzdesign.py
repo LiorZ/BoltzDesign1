@@ -182,6 +182,14 @@ Examples:
     parser.add_argument('--helix_loss_min', type=float, default=-0.3,
                         help='Minimum helix loss weights')
 
+    # Template bias parameters
+    parser.add_argument('--template_pdb', type=str, default=None,
+                        help='Path to template PDB used for fold bias')
+    parser.add_argument('--template_chain_id', type=str, default='A',
+                        help='Chain ID within template PDB')
+    parser.add_argument('--fold_loss_scale', type=float, default=1.0,
+                        help='Weight for template fold loss')
+
     
     # LigandMPNN parameters
     parser.add_argument('--num_designs', type=int, default=2,
@@ -398,6 +406,9 @@ def run_boltz_design_step(args, config, boltz_model, yaml_dir, main_dir, version
         show_animation=args.show_animation,
         save_trajectory=args.save_trajectory,
         redo_boltz_predict=args.redo_boltz_predict,
+        template_pdb=args.template_pdb,
+        template_chain_id=args.template_chain_id,
+        fold_loss_scale=args.fold_loss_scale,
     )
     
     print("Boltz design step completed!")

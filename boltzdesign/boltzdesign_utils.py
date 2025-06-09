@@ -1103,6 +1103,9 @@ def run_boltz_design(
     show_animation=False,
     save_trajectory=False,
     redo_boltz_predict=True,
+    template_pdb=None,
+    template_chain_id='A',
+    fold_loss_scale=1.0,
 ):
     """
     Run Boltz protein design pipeline.
@@ -1112,6 +1115,9 @@ def run_boltz_design(
         yaml_dir (str): Directory containing input yaml files
         version_name (str): Name for version subdirectory
         config (dict): Configuration parameters. If None, uses defaults.
+        template_pdb (str, optional): Template PDB path for fold bias
+        template_chain_id (str): Chain ID within the template structure
+        fold_loss_scale (float): Weight for fold loss term
     """
     if config is None:
         config = {
@@ -1197,7 +1203,10 @@ def run_boltz_design(
                         input_res_type=False,
                         loss_scales=loss_scales,
                         chain_to_number=chain_to_number,
-                        save_trajectory=save_trajectory
+                        save_trajectory=save_trajectory,
+                        template_pdb=template_pdb,
+                        template_chain_id=template_chain_id,
+                        fold_loss_scale=fold_loss_scale
                     )
                     print('warm up done')     
                     output, output_apo, best_batch, best_batch_apo, best_structure, best_structure_apo ,distogram_history_2, sequence_history_2, loss_history_2, con_loss_history, i_con_loss_history, plddt_loss_history, fold_loss_history_2, traj_coords_list_2, traj_plddt_list_2, structure = boltz_hallucination(
@@ -1209,7 +1218,10 @@ def run_boltz_design(
                         input_res_type=input_res_type,
                         loss_scales=loss_scales,
                         chain_to_number=chain_to_number,
-                        save_trajectory=save_trajectory
+                        save_trajectory=save_trajectory,
+                        template_pdb=template_pdb,
+                        template_chain_id=template_chain_id,
+                        fold_loss_scale=fold_loss_scale
                     )
                     loss_history.extend(loss_history_2)
                     distogram_history.extend(distogram_history_2) 
